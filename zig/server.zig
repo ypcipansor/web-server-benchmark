@@ -32,17 +32,25 @@ pub fn main() !void {
 fn handleConnection(connection: net.Server.Connection) void {
     defer connection.stream.close();
 
+    // Read until the full request line (or header terminator) has arrived so a
+    // partial first read can't trigger a spurious 404 for a valid /hello.
     var buffer: [1024]u8 = undefined;
+    var total: usize = 0;
+    while (total < buffer.len) {
+        const n = connection.stream.read(buffer[total..]) catch return;
+        if (n == 0) break;
+        total += n;
+        // Stop once the request headers are complete (\r\n\r\n).
+        if (std.mem.indexOf(u8, buffer[0..total], "\r\n\r\n") != null) break;
+    }
 
-    // Read request
-    const bytes_read = connection.stream.read(&buffer) catch return;
+    if (total == 0) return;
 
-    if (bytes_read == 0) return;
+    const request = buffer[0..total];
 
-    const request = buffer[0..bytes_read];
-
-    // Check for GET /hello
-    if (std.mem.indexOf(u8, request, "GET /hello ") != null) {
+    // Match "GET /hello " at the START of the request line only (not via a
+    // substring scan that could match anywhere in the buffer).
+    if (std.mem.startsWith(u8, request, "GET /hello ")) {
         const response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 27\r\nConnection: close\r\n\r\n{\"message\":\"Hello, world!\"}";
         _ = connection.stream.writeAll(response) catch {};
     } else {

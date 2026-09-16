@@ -61,13 +61,15 @@ function serve($sock, $ok, $n404): void
         }
 
         // Parse the request line (e.g. "GET /hello HTTP/1.1") and compare the
-        // exact target path against /hello instead of a raw substring scan, so
-        // requests to any other path (e.g. /notfound) correctly get a 404.
+        // exact method + target path instead of a raw substring scan, so
+        // requests to any other path (e.g. /notfound) or with a non-GET method
+        // correctly get a 404.
         $line = strtok($buf, "\r\n");
         $parts = $line === false ? [] : explode(' ', $line);
+        $method = isset($parts[0]) ? $parts[0] : '';
         $path = isset($parts[1]) ? $parts[1] : '';
 
-        if ($path === '/hello') {
+        if ($method === 'GET' && $path === '/hello') {
             @socket_write($client, $ok, strlen($ok));
         } else {
             @socket_write($client, $n404, strlen($n404));

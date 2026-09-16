@@ -61,7 +61,8 @@ procedure Server is
      "Not found";
    Response_404_Len : constant size_t := size_t (Response_404'Length);
 
-   --  Returns True when the request line targets exactly "/hello".
+   --  Returns True when the request starts with the exact "GET /hello "
+   --  request-line prefix.
    function Is_Hello (Req : C.char_array; Len : Natural) return Boolean is
       Wanted : constant String := "GET /hello ";
    begin
@@ -76,43 +77,91 @@ procedure Server is
       return True;
    end Is_Hello;
 
-   --  One task per accepted connection, so a blocked read on one client can't
-   --  stall the accept loop. This lets the server handle 100 concurrent
-   --  benchmark connections while still routing on the request path.
+   --  Returns True when the request bytes contain the header terminator
+   --  CRLFCRLF, i.e. the request headers are complete.
+   function Has_Full_Headers (Req : C.char_array; Len : Natural) return Boolean is
+      Marker : constant String := ASCII.CR & ASCII.LF & ASCII.CR & ASCII.LF;
+   begin
+      if Len < Marker'Length then
+         return False;
+      end if;
+      for I in 0 .. Len - Marker'Length loop
+         declare
+            Match : Boolean := True;
+         begin
+            for J in Marker'First .. Marker'Last loop
+               if C.To_Ada (Req (size_t (I + (J - Marker'First)))) /= Marker (J) then
+                  Match := False;
+                  exit;
+               end if;
+            end loop;
+            if Match then
+               return True;
+            end if;
+         end;
+      end loop;
+      return False;
+   end Has_Full_Headers;
+
+   --  A fixed pool of worker tasks, each serving one connection at a time and
+   --  then looping back to accept the next. Tasks are created once and reused,
+   --  so no memory is allocated or leaked per connection. More workers than
+   --  the benchmark's concurrent load (100-500) ensures the accept loop is not
+   --  starved even if several workers are blocked reading slow peers.
+   Worker_Count : constant := 256;
+
    task type Handler is
       entry Start (Fd : in int);
    end Handler;
 
-   type Handler_Access is access Handler;
+   Workers : array (1 .. Worker_Count) of Handler;
 
    task body Handler is
       Client       : int;
       Dummy        : long;
+      Total        : Natural;
       Local_Buffer : aliased C.char_array (0 .. 1023);
    begin
-      accept Start (Fd : in int) do
-         Client := Fd;
-      end Start;
+      loop
+         accept Start (Fd : in int) do
+            Client := Fd;
+         end Start;
 
-      Dummy := C_Read (Client, Local_Buffer'Address, 1024);
+         --  Read until the request headers are complete (CRLFCRLF) so a
+         --  partial first read cannot trigger a spurious 404 for a valid
+         --  /hello. Stop early if the peer closes or the buffer fills.
+         Total := 0;
+         while Total < Local_Buffer'Length loop
+            Dummy := C_Read
+              (Client, Local_Buffer (size_t (Total))'Address,
+               size_t (Local_Buffer'Length - Total));
+            if Dummy <= 0 then
+               exit;   -- error or peer closed
+            end if;
+            Total := Total + Natural (Dummy);
+            if Has_Full_Headers (Local_Buffer, Total) then
+               exit;
+            end if;
+         end loop;
 
-      --  Serve 200 only for exact path /hello, otherwise 404. If the peer
-      --  closed before sending a request (read <= 0), just close the socket
-      --  without answering (avoids spurious 404s on dead connections).
-      if Dummy > 0 and then Is_Hello (Local_Buffer, Natural (Dummy)) then
-         Dummy := C_Write (Client, Response_Str'Address, Response_Len);
-      elsif Dummy > 0 then
-         Dummy := C_Write (Client, Response_404'Address, Response_404_Len);
-      end if;
+         --  Serve 200 only for exact GET /hello, otherwise 404. If the peer
+         --  closed before sending a request (Total = 0), just close the socket
+         --  without answering (avoids spurious 404s on dead connections).
+         if Total > 0 and then Is_Hello (Local_Buffer, Total) then
+            Dummy := C_Write (Client, Response_Str'Address, Response_Len);
+         elsif Total > 0 then
+            Dummy := C_Write (Client, Response_404'Address, Response_404_Len);
+         end if;
 
-      Dummy := long (C_Close (Client));
+         Dummy := long (C_Close (Client));
+      end loop;
    end Handler;
 
    Server_Fd     : int;
    Client_Fd     : int;
    Addr          : Sockaddr_In;
    Ret           : int;
-   H             : Handler_Access;
+   Next_Worker   : Positive := 1;
 
 begin
    Put_Line ("Starting Ada HTTP Server on port 8080...");
@@ -145,11 +194,16 @@ begin
    loop
       Client_Fd := C_Accept (Server_Fd, System.Null_Address, System.Null_Address);
       if Client_Fd >= 0 then
-         --  Hand each connection to its own task. Each task reads the request
-         --  (blocking is fine because it can't stall the accept loop), routes
-         --  on the path, and closes the socket.
-         H := new Handler;
-         H.Start (Client_Fd);
+         --  Hand each connection to a worker from the fixed pool (round-robin).
+         --  The worker reads the full request, routes on the path, and closes
+         --  the socket, then re-accepts its next Start entry. No per-connection
+         --  allocation means no memory leak under sustained load.
+         Workers (Next_Worker).Start (Client_Fd);
+         if Next_Worker = Worker_Count then
+            Next_Worker := 1;
+         else
+            Next_Worker := Next_Worker + 1;
+         end if;
       end if;
    end loop;
 end Server;

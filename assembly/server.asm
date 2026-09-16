@@ -38,6 +38,18 @@ section .data
              db '{"message":"Hello, world!"}'
     response_len equ $ - response
 
+    response_404 db 'HTTP/1.1 404 Not Found', 13, 10
+                 db 'Content-Type: text/plain', 13, 10
+                 db 'Content-Length: 9', 13, 10
+                 db 'Connection: close', 13, 10
+                 db 13, 10
+                 db 'Not found'
+    response_404_len equ $ - response_404
+
+    ; Request-line prefix that maps to a 200 (exact "GET /hello ", 11 bytes).
+    hello_path db 'GET /hello '
+    hello_path_len equ $ - hello_path
+
     sockaddr:
         dw AF_INET          ; family
         dw 0x901f           ; port 8080 (0x1f90 big-endian)
@@ -132,6 +144,23 @@ event_loop:
     mov rsi, buffer
     mov rdx, 4096
     syscall
+    ; rax = bytes read. rdi still holds the client fd for send/get close.
+    test rax, rax
+    jle .close_client        ; read error / peer closed: just close, no answer
+    ; Route: only the exact request-line prefix "GET /hello " gets a 200;
+    ; every other path or method gets a 404.
+    cmp rax, hello_path_len
+    jl  .send_404
+    xor rcx, rcx
+.route_cmp:
+    ; Compare byte-by-byte. Use al/dl (not cl) so rcx stays the array index.
+    mov al, byte [buffer + rcx]
+    mov dl, byte [hello_path + rcx]
+    cmp al, dl
+    jne .send_404
+    inc rcx
+    cmp rcx, hello_path_len
+    jl  .route_cmp
     ; sendto(fd, response, response_len, MSG_NOSIGNAL, NULL, 0)
     mov rax, SYS_sendto
     mov rsi, response
@@ -140,7 +169,18 @@ event_loop:
     xor r8, r8
     xor r9, r9
     syscall
-    ; close(fd)
+    jmp .close_client
+.send_404:
+    ; sendto(fd, response_404, response_404_len, MSG_NOSIGNAL, NULL, 0)
+    mov rax, SYS_sendto
+    mov rsi, response_404
+    mov rdx, response_404_len
+    mov r10d, MSG_NOSIGNAL
+    xor r8, r8
+    xor r9, r9
+    syscall
+.close_client:
+    ; close(fd) -- rdi already holds the client fd
     mov rax, SYS_close
     syscall
     ; remove this entry (compact the array)
