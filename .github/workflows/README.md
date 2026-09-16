@@ -63,7 +63,7 @@ When adding a new language implementation:
 
 ## benchmark-weekly.yml
 
-This workflow automatically runs comprehensive benchmarks every Monday and creates a pull request with the updated results.
+This workflow automatically runs comprehensive benchmarks every Monday and commits the updated results directly to `main`.
 
 ### Trigger Events
 
@@ -102,7 +102,7 @@ This workflow automatically runs comprehensive benchmarks every Monday and creat
 This automated workflow provides:
 - **Regular performance tracking** - Weekly benchmarks for consistent data
 - **Trend analysis** - Historical artifacts enable performance trend monitoring
-- **Visibility** - Automated PRs ensure results are reviewed
+- **Visibility** - Updated README table makes recent results easy to review
 - **Regression detection** - Early warning of performance degradations
 
 ### Manual Triggering
@@ -116,5 +116,5 @@ To run benchmarks manually:
 ### Permissions
 
 The workflow requires:
-- `contents: write` - To create commits with benchmark results
-- `pull-requests: write` - To create pull requests
+- `contents: write` - To commit the updated `README.md` back to `main`
+  (no pull request is created, so `pull-requests` permission is not needed)

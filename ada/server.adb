@@ -13,6 +13,7 @@ procedure Server is
    SOCK_STREAM: constant int := 1;
    INADDR_ANY : constant unsigned := 0;
    PORT        : constant int := 8080;
+   MSG_NOSIGNAL: constant int := 16#4000#;  -- 0x4000, Linux send() flag
 
    --  Raw C socket API imported directly, mirroring the Fortran server.
    --  This avoids any external Ada web-server dependency and is fully
@@ -36,8 +37,12 @@ procedure Server is
    pragma Import (C, C_Accept, "accept");
    function C_Read (Fd : int; Buf : System.Address; Count : size_t) return long;
    pragma Import (C, C_Read, "read");
-   function C_Write (Fd : int; Buf : System.Address; Count : size_t) return long;
-   pragma Import (C, C_Write, "write");
+   --  send() with an explicit flags argument. We pass MSG_NOSIGNAL so a client
+   --  that resets the connection after sending its request cannot raise
+   --  SIGPIPE (whose default action terminates the process). This mirrors the
+   --  Assembly server, which already uses MSG_NOSIGNAL on its sendto().
+   function C_Send (Fd : int; Buf : System.Address; Count : size_t; Flags : int) return long;
+   pragma Import (C, C_Send, "send");
    function C_Close (Fd : int) return int;
    pragma Import (C, C_Close, "close");
    function C_Htons (Hostshort : unsigned_short) return unsigned_short;
@@ -148,9 +153,9 @@ procedure Server is
          --  closed before sending a request (Total = 0), just close the socket
          --  without answering (avoids spurious 404s on dead connections).
          if Total > 0 and then Is_Hello (Local_Buffer, Total) then
-            Dummy := C_Write (Client, Response_Str'Address, Response_Len);
+            Dummy := C_Send (Client, Response_Str'Address, Response_Len, MSG_NOSIGNAL); -- MSG_NOSIGNAL prevents SIGPIPE
          elsif Total > 0 then
-            Dummy := C_Write (Client, Response_404'Address, Response_404_Len);
+            Dummy := C_Send (Client, Response_404'Address, Response_404_Len, MSG_NOSIGNAL); -- MSG_NOSIGNAL prevents SIGPIPE
          end if;
 
          Dummy := long (C_Close (Client));

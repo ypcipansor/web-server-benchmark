@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+# All 19 language implementations, matching benchmark-all.sh so the stress
+# suite covers the same set as the standard benchmark.
 LANGUAGES=(
     "c"
     "crystal"
@@ -16,6 +18,11 @@ LANGUAGES=(
     "javascript"
     "ruby"
     "typescript"
+    "ada"
+    "assembly"
+    "csharp"
+    "fortran"
+    "nim"
 )
 
 echo "Starting Stress Tests..."

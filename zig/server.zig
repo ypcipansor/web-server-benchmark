@@ -32,6 +32,15 @@ pub fn main() !void {
 fn handleConnection(connection: net.Server.Connection) void {
     defer connection.stream.close();
 
+    // Give each connection a short receive timeout so a peer that holds a
+    // partial request open (never sending the "\r\n\r\n" terminator below)
+    // cannot block a worker thread forever. With n_jobs=128 workers, even a
+    // handful of stuck peers could otherwise consume the entire pool and starve
+    // every new connection. After the timeout, read() returns EWOULDBLOCK and
+    // we drop the connection.
+    const tv = std.posix.timeval{ .tv_sec = 2, .tv_usec = 0 };
+    std.posix.setsockopt(connection.stream.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
+
     // Read until the full request line (or header terminator) has arrived so a
     // partial first read can't trigger a spurious 404 for a valid /hello.
     var buffer: [1024]u8 = undefined;

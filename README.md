@@ -47,7 +47,7 @@ Previously several implementations failed to build or run. They have been fixed 
 | Language | Fix | Verified |
 |----------|-----|----------|
 | **Assembly** | Replaced the single-threaded blocking server with a `poll(2)`-based event loop using `MSG_NOSIGNAL` | ✅ ~11,832 req/s, 0 failures |
-| **Fortran** | Stabilized the `iso_c_binding` raw-socket server under load | ✅ ~12,478 req/s, 0 failures |
+| **Fortran** | Rebuilt server as a `poll(2)`-based non-blocking event loop with `send(MSG_NOSIGNAL)` and read-until-headers routing | ✅ ~12,200 req/s, 0 failures |
 | **Ada** | Replaced the broken AWS dependency with a raw-socket server via C interop | ✅ ~12,332 req/s, 0 failures |
 | **C#** | Updated to .NET SDK 8 runtime/`Dockerfile` | ✅ ~6,336 req/s, 0 failures |
 | **Nim** | Removed the failing `jester` external dependency; uses std `asynchttpserver` | ✅ ~11,485 req/s, 0 failures |

@@ -6,9 +6,10 @@ on:
     - cron: '0 0 * * 1'
   workflow_dispatch: # Allow manual trigger for testing
 
+# The routine run commits README.md directly to main; it does not open a pull
+# request, so only contents: write is required.
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   run-benchmarks:
