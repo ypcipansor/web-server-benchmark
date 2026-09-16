@@ -125,16 +125,18 @@ program http_server
 
     print *, "Listening..."
 
-    ! 4. Loop
+    ! 4. Accept loop (single-threaded, one connection per iteration)
     do
-        ! Non-blocking accept: returns immediately if no pending connection
+        ! Blocking accept: waits for the next pending connection. This is the
+        ! correct model for this single-threaded server -- each iteration serves
+        ! exactly one connection before looping to accept the next one.
         client_fd = accept(server_fd, c_null_ptr, c_null_ptr)
         if (client_fd < 0) then
-            ! Nothing to accept right now, keep looping
+            ! accept failed (unexpected for a blocking listener); loop again
             continue
         else
             ! Set client socket to non-blocking so a slow/stalled peer
-            ! cannot block the accept loop under concurrent load.
+            ! cannot block the response write under concurrent load.
             ! fcntl(fd, F_SETFL=4, O_NONBLOCK=0x800)
             ret = fcntl(client_fd, 4, 2048)
 

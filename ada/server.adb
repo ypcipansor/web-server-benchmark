@@ -40,8 +40,6 @@ procedure Server is
    pragma Import (C, C_Write, "write");
    function C_Close (Fd : int) return int;
    pragma Import (C, C_Close, "close");
-   function C_Fcntl (Fd : int; Cmd : int; Arg : int) return int;
-   pragma Import (C, C_Fcntl, "fcntl");
    function C_Htons (Hostshort : unsigned_short) return unsigned_short;
    pragma Import (C, C_Htons, "htons");
 
@@ -49,16 +47,72 @@ procedure Server is
      "HTTP/1.1 200 OK" & ASCII.CR & ASCII.LF &
      "Content-Type: application/json" & ASCII.CR & ASCII.LF &
      "Content-Length: 27" & ASCII.CR & ASCII.LF &
+     "Connection: close" & ASCII.CR & ASCII.LF &
      ASCII.CR & ASCII.LF &
      "{""message"":""Hello, world!""}";
 
-   Buffer        : aliased C.char_array (0 .. 1023);
-   Response_Len  : constant size_t := size_t (Response_Str'Length);
+   Response_Len     : constant size_t := size_t (Response_Str'Length);
+   Response_404     : constant String :=
+     "HTTP/1.1 404 Not Found" & ASCII.CR & ASCII.LF &
+     "Content-Type: text/plain" & ASCII.CR & ASCII.LF &
+     "Content-Length: 9" & ASCII.CR & ASCII.LF &
+     "Connection: close" & ASCII.CR & ASCII.LF &
+     ASCII.CR & ASCII.LF &
+     "Not found";
+   Response_404_Len : constant size_t := size_t (Response_404'Length);
+
+   --  Returns True when the request line targets exactly "/hello".
+   function Is_Hello (Req : C.char_array; Len : Natural) return Boolean is
+      Wanted : constant String := "GET /hello ";
+   begin
+      if Len < Wanted'Length then
+         return False;
+      end if;
+      for I in 0 .. Wanted'Length - 1 loop
+         if C.To_Ada (Req (size_t (I))) /= Wanted (Wanted'First + I) then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Is_Hello;
+
+   --  One task per accepted connection, so a blocked read on one client can't
+   --  stall the accept loop. This lets the server handle 100 concurrent
+   --  benchmark connections while still routing on the request path.
+   task type Handler is
+      entry Start (Fd : in int);
+   end Handler;
+
+   type Handler_Access is access Handler;
+
+   task body Handler is
+      Client       : int;
+      Dummy        : long;
+      Local_Buffer : aliased C.char_array (0 .. 1023);
+   begin
+      accept Start (Fd : in int) do
+         Client := Fd;
+      end Start;
+
+      Dummy := C_Read (Client, Local_Buffer'Address, 1024);
+
+      --  Serve 200 only for exact path /hello, otherwise 404. If the peer
+      --  closed before sending a request (read <= 0), just close the socket
+      --  without answering (avoids spurious 404s on dead connections).
+      if Dummy > 0 and then Is_Hello (Local_Buffer, Natural (Dummy)) then
+         Dummy := C_Write (Client, Response_Str'Address, Response_Len);
+      elsif Dummy > 0 then
+         Dummy := C_Write (Client, Response_404'Address, Response_404_Len);
+      end if;
+
+      Dummy := long (C_Close (Client));
+   end Handler;
+
    Server_Fd     : int;
    Client_Fd     : int;
    Addr          : Sockaddr_In;
    Ret           : int;
-   Dummy         : long;
+   H             : Handler_Access;
 
 begin
    Put_Line ("Starting Ada HTTP Server on port 8080...");
@@ -91,17 +145,11 @@ begin
    loop
       Client_Fd := C_Accept (Server_Fd, System.Null_Address, System.Null_Address);
       if Client_Fd >= 0 then
-         --  Non-blocking client so a slow peer can't stall the accept loop.
-         --  fcntl(fd, F_SETFL=4, O_NONBLOCK=2048)
-         Ret := C_Fcntl (Client_Fd, 4, 2048);
-
-         --  Best-effort read of the request (ignored)
-         Dummy := C_Read (Client_Fd, Buffer'Address, 1024);
-
-         --  Write fixed response, then close deterministically
-         Dummy := C_Write (Client_Fd, Response_Str'Address, Response_Len);
-
-         Ret := C_Close (Client_Fd);
+         --  Hand each connection to its own task. Each task reads the request
+         --  (blocking is fine because it can't stall the accept loop), routes
+         --  on the path, and closes the socket.
+         H := new Handler;
+         H.Start (Client_Fd);
       end if;
    end loop;
 end Server;

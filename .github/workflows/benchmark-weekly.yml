@@ -102,8 +102,8 @@ jobs:
           # Framework/Library mapping
           FRAMEWORKS = {
               'c': 'libmicrohttpd', 'crystal': 'HTTP::Server', 'rust': 'Actix-web',
-              'go': 'net/http', 'zig': 'Raw sockets (poll)', 'cpp': 'Crow',
-              'php': 'Raw sockets (pcntl)', 'v': 'net', 'kotlin': 'Ktor',
+              'go': 'net/http', 'zig': 'Raw sockets (Thread.Pool)', 'cpp': 'Crow',
+              'php': 'Raw sockets (pcntl + sockets)', 'v': 'net', 'kotlin': 'Ktor',
               'java': 'Spring Boot', 'python': 'FastAPI + Uvicorn',
               'javascript': 'Express', 'ruby': 'Sinatra + Puma',
               'typescript': 'Express', 'nim': 'std asynchttpserver',
