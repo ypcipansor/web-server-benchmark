@@ -278,14 +278,31 @@ contains
     ! byte has been written; retry on EAGAIN and only stop on a fatal error.
     ! This guarantees the client never sees a truncated response (which ab
     ! would otherwise count as a failed request when we close too early).
+    !
+    ! The EAGAIN retry is bounded by an absolute wall-clock deadline so a peer
+    ! that never drains its receive buffer (a stuck/slow reader) cannot make
+    ! this single-threaded event loop busy-spin here forever, starving every
+    ! other connection. sched_yield() alone does not wait for the socket to
+    ! become writable, so without a cap one stuck client would monopolize the
+    ! whole server. Under normal benchmark load the tiny response fits in the
+    ! socket send buffer and EAGAIN never fires, so the full response is always
+    ! delivered; the deadline only trips for a truly stuck peer, which is then
+    ! dropped instead of being allowed to hold the loop.
     subroutine send_all(fd, resp, resp_len)
         integer(c_int), intent(in) :: fd
         character(len=*), intent(in), target :: resp
         integer(c_long), intent(in) :: resp_len
         integer(c_long) :: sent, sent_total
         integer(c_int) :: e, y
+        integer :: t0, t1, cr, cm
+        real :: elapsed_sec
         ! EAGAIN == EWOULDBLOCK == 11 on Linux: send buffer is full; retry.
         integer(c_int), parameter :: EAGAIN = 11
+        ! Give a blocked send at most this much wall-clock time before giving
+        ! up on the peer (prevents a slow reader from monopolizing the loop).
+        real, parameter :: send_deadline_sec = 2.0
+        call system_clock(count_rate=cr, count_max=cm)
+        call system_clock(count=t0)
         sent_total = 0
         do while (sent_total < resp_len)
             sent = c_send(fd, c_loc(resp(sent_total+1:sent_total+1)), &
@@ -296,6 +313,11 @@ contains
                 e = get_errno()
                 if (e == EAGAIN) then
                     y = c_sched_yield()   ! wait for the peer to drain a bit
+                    call system_clock(count=t1)
+                    elapsed_sec = real(t1 - t0) / real(max(cr, 1))
+                    if (elapsed_sec > send_deadline_sec) then
+                        exit   ! stuck peer; stop holding the event loop
+                    end if
                 else
                     exit                    ! fatal error; give up on this peer
                 end if

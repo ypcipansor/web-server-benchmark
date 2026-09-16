@@ -70,14 +70,30 @@ jobs:
             echo "| Rank | Language | Req/sec | Time/req (ms) | Status |" >> benchmark_summary.md
             echo "|------|----------|---------|---------------|--------|" >> benchmark_summary.md
 
-            # Parse and format results, sorted by req/sec descending
+            # Parse and format results, sorted by req/sec descending.
+            # A language is only a clean "Success" when it has zero failed
+            # requests; this matches the README leaderboard filter (which
+            # excludes any row whose failed-requests column is > 0). A row
+            # with failed_requests > 0 (or a non-numeric / unparseable value)
+            # is flagged as failed here so the artifact never contradicts the
+            # README table.
             RANK=1
             while IFS='|' read -r lang rps tpr tr fr; do
               if [ "$rps" = "BUILD_FAILED" ] || [ "$rps" = "SERVER_FAILED" ]; then
                 echo "| - | $lang | N/A | N/A | ❌ $rps |" >> benchmark_summary.md
               elif [ -n "$rps" ] && [ -n "$tpr" ]; then
-                echo "| $RANK | $lang | $rps | $tpr | ✅ Success |" >> benchmark_summary.md
-                RANK=$((RANK + 1))
+                # Normalize the failed-requests column: default 0 when empty.
+                frn="${fr:-0}"
+                if [[ "$frn" =~ ^[0-9]+$ ]]; then
+                  if [ "$frn" -gt 0 ]; then
+                    echo "| - | $lang | $rps | $tpr | ❌ $frn failed |" >> benchmark_summary.md
+                  else
+                    echo "| $RANK | $lang | $rps | $tpr | ✅ Success |" >> benchmark_summary.md
+                    RANK=$((RANK + 1))
+                  fi
+                else
+                  echo "| - | $lang | $rps | $tpr | ❌ failed: '$fr' |" >> benchmark_summary.md
+                fi
               fi
             done < <(sort -t'|' -k2 -nr benchmark_results.txt)
           fi
@@ -237,8 +253,25 @@ jobs:
             echo "### Quick Stats" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
 
-            success_count=$(grep -v "BUILD_FAILED\|SERVER_FAILED" benchmark_results.txt | grep -c '|' || echo "0")
-            failed_count=$(grep -cE "BUILD_FAILED|SERVER_FAILED" benchmark_results.txt || echo "0")
+            # Matches the README leaderboard filter: only rows with zero failed
+            # requests (failed column absent or 0) count as successful; rows
+            # with failed_requests > 0 (or a non-numeric failed column), plus
+            # any BUILD_FAILED/SERVER_FAILED row, count as failed so the
+            # summary never disagrees with the README table.
+            success_count=0
+            failed_count=0
+            while IFS='|' read -r lang rps tpr tr fr; do
+              if [ "$rps" = "BUILD_FAILED" ] || [ "$rps" = "SERVER_FAILED" ]; then
+                failed_count=$((failed_count + 1))
+              elif [ -n "$rps" ] && [ -n "$tpr" ]; then
+                frn="${fr:-0}"
+                if [[ "$frn" =~ ^[0-9]+$ ]] && [ "$frn" -eq 0 ]; then
+                  success_count=$((success_count + 1))
+                else
+                  failed_count=$((failed_count + 1))
+                fi
+              fi
+            done < benchmark_results.txt
 
             echo "- ✅ Successful benchmarks: $success_count" >> $GITHUB_STEP_SUMMARY
             echo "- ❌ Failed benchmarks: $failed_count" >> $GITHUB_STEP_SUMMARY
@@ -248,8 +281,11 @@ jobs:
             echo "| Language | Req/sec | Latency (ms) |" >> $GITHUB_STEP_SUMMARY
             echo "|----------|---------|--------------|" >> $GITHUB_STEP_SUMMARY
             sort -t'|' -k2 -nr benchmark_results.txt | while IFS='|' read -r lang rps tpr tr fr; do
-              if [ "$rps" != "BUILD_FAILED" ] && [ "$rps" != "SERVER_FAILED" ] && [ -n "$rps" ]; then
-                echo "| $lang | $rps | $tpr |" >> $GITHUB_STEP_SUMMARY
+              if [ "$rps" != "BUILD_FAILED" ] && [ "$rps" != "SERVER_FAILED" ] && [ -n "$rps" ] && [ -n "$tpr" ]; then
+                frn="${fr:-0}"
+                if [[ "$frn" =~ ^[0-9]+$ ]] && [ "$frn" -eq 0 ]; then
+                  echo "| $lang | $rps | $tpr |" >> $GITHUB_STEP_SUMMARY
+                fi
               fi
             done
           else

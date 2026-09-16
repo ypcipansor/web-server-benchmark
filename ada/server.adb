@@ -1,4 +1,5 @@
 with Ada.Text_IO;
+with Ada.Real_Time;
 with Interfaces.C;
 with System;
 
@@ -6,6 +7,10 @@ procedure Server is
 
    use Ada.Text_IO;
    use Interfaces.C;
+   --  Bring the operators for Ada.Real_Time.Time ("+", ">", etc.) into scope
+   --  without importing the Time selector itself (no ambiguity with other
+   --  packages' Time names).
+   use type Ada.Real_Time.Time;
 
    package C renames Interfaces.C;
 
@@ -91,6 +96,18 @@ procedure Server is
    --  slow peers therefore cannot exhaust the fixed worker pool.
    Timeout_Tv : aliased Timeval := (Tv_Sec => 2, Tv_Usec => 0);
 
+   --  Absolute total budget for reading a request's headers. SO_RCVTIMEO only
+   --  bounds the pause between individual reads: a peer that trickles one byte
+   --  just under the timeout keeps each read returning data, so the header-read
+   --  loop could otherwise run forever and a handful of such peers would pin
+   --  every worker in the fixed pool, starving /hello. Imposing a hard deadline
+   --  on the WHOLE header read guarantees a slow/stalled peer is dropped after
+   --  at most Read_Deadline_Sec seconds regardless of how it spaces its bytes.
+   Read_Deadline_Sec : constant := 5;
+   --  Also bound the maximum number of read attempts per connection as a second,
+   --  time-independent guard (defensive; the absolute deadline above is primary).
+   Max_Read_Attempts : constant Natural := 100;
+
    --  Returns True when the request starts with the exact "GET /hello "
    --  request-line prefix.
    function Is_Hello (Req : C.char_array; Len : Natural) return Boolean is
@@ -151,6 +168,10 @@ procedure Server is
       Dummy        : long;
       Opt_Result   : int;
       Total        : Natural;
+      Read_Attempt : Natural;
+      Full_Headers : Boolean;
+      Start_Read   : Ada.Real_Time.Time;
+      Deadline     : Ada.Real_Time.Time;
       Local_Buffer : aliased C.char_array (0 .. 1023);
    begin
       loop
@@ -166,25 +187,45 @@ procedure Server is
 
          --  Read until the request headers are complete (CRLFCRLF) so a
          --  partial first read cannot trigger a spurious 404 for a valid
-         --  /hello. Stop early if the peer closes or the buffer fills.
+         --  /hello. Stop early if the peer stalls for too long or the buffer
+         --  fills.
+         --
+         --  The absolute deadline is what protects the worker pool: SO_RCVTIMEO
+         --  alone only caps the pause between reads, so a peer trickling one
+         --  byte just under the timeout would keep the loop alive forever and
+         --  pin this worker despite never finishing its request. Capping the
+         --  total wall-clock time spent reading (plus a read-attempt cap as a
+         --  time-independent backstop) guarantees such a peer is dropped here,
+         --  so it can never accumulate across all 256 workers and starve /hello.
          Total := 0;
+         Read_Attempt := 0;
+         Full_Headers := False;
+         Start_Read := Ada.Real_Time.Clock;
+         Deadline := Start_Read + Ada.Real_Time.Milliseconds (Read_Deadline_Sec * 1000);
          while Total < Local_Buffer'Length loop
+            exit when Ada.Real_Time.Clock > Deadline;
+            exit when Read_Attempt >= Max_Read_Attempts;
             Dummy := C_Read
               (Client, Local_Buffer (size_t (Total))'Address,
                size_t (Local_Buffer'Length - Total));
             if Dummy <= 0 then
-               exit;   -- error or peer closed
+               exit;   -- timeout or peer closed
             end if;
             Total := Total + Natural (Dummy);
+            Read_Attempt := Read_Attempt + 1;
             if Has_Full_Headers (Local_Buffer, Total) then
+               Full_Headers := True;
                exit;
             end if;
          end loop;
 
-         --  Serve 200 only for exact GET /hello, otherwise 404. If the peer
-         --  closed before sending a request (Total = 0), just close the socket
-         --  without answering (avoids spurious 404s on dead connections).
-         if Total > 0 and then Is_Hello (Local_Buffer, Total) then
+         --  Serve 200 ONLY for a complete request whose request-line prefix is
+         --  exactly "GET /hello ". A peer whose header read stopped (timeout,
+         --  absolute deadline, or EOF) before CRLFCRLF arrived never gets a 200,
+         --  even if the bytes happen to start with "GET /hello " -- answering
+         --  200 for an incomplete request would be wrong. In that case we answer
+         --  404 if anything was received, otherwise just close the socket.
+         if Full_Headers and then Is_Hello (Local_Buffer, Total) then
             Dummy := C_Send (Client, Response_Str'Address, Response_Len, MSG_NOSIGNAL); -- MSG_NOSIGNAL prevents SIGPIPE
          elsif Total > 0 then
             Dummy := C_Send (Client, Response_404'Address, Response_404_Len, MSG_NOSIGNAL); -- MSG_NOSIGNAL prevents SIGPIPE
