@@ -69,6 +69,13 @@ program http_server
             integer(c_int16_t), value :: hostshort
             integer(c_int16_t) :: htons
         end function htons
+
+        function fcntl(fd, cmd, arg) bind(C, name="fcntl")
+            import :: c_int
+            integer(c_int), value :: fd, cmd
+            integer(c_int), value :: arg
+            integer(c_int) :: fcntl
+        end function fcntl
     end interface
     
     integer(c_int) :: server_fd, client_fd
@@ -120,21 +127,27 @@ program http_server
 
     ! 4. Loop
     do
+        ! Non-blocking accept: returns immediately if no pending connection
         client_fd = accept(server_fd, c_null_ptr, c_null_ptr)
         if (client_fd < 0) then
-            print *, "Error accepting"
-            cycle
+            ! Nothing to accept right now, keep looping
+            continue
+        else
+            ! Set client socket to non-blocking so a slow/stalled peer
+            ! cannot block the accept loop under concurrent load.
+            ! fcntl(fd, F_SETFL=4, O_NONBLOCK=0x800)
+            ret = fcntl(client_fd, 4, 2048)
+
+            ! Best-effort read of the request (non-blocking, ignored)
+            buf_ptr = c_loc(buffer)
+            bytes_read = c_read(client_fd, buf_ptr, 1024_8)
+
+            ! Write response, then close deterministically
+            buf_ptr = c_loc(response_str)
+            bytes_written = c_write(client_fd, buf_ptr, len_trim(response_str, kind=8))
+
+            ret = c_close(client_fd)
         end if
-
-        ! Read request (dummy read)
-        buf_ptr = c_loc(buffer)
-        bytes_read = c_read(client_fd, buf_ptr, 1024_8)
-
-        ! Write response
-        buf_ptr = c_loc(response_str)
-        bytes_written = c_write(client_fd, buf_ptr, len_trim(response_str, kind=8))
-
-        ret = c_close(client_fd)
     end do
 
     ret = c_close(server_fd)

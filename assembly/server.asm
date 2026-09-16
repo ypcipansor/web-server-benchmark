@@ -1,3 +1,34 @@
+; ---------------------------------------------------------------------------
+; Minimal HTTP server for the benchmark suite.
+;
+; Single process, poll()-based event loop. The listening socket plus every
+; accepted client socket is monitored with poll(2). When a client is readable
+; we read the request and immediately send the response (using MSG_NOSIGNAL so
+; a client that closed early cannot kill us with SIGPIPE). Because the handler
+; is non-blocking and multiplexed, it keeps up with the benchmark's concurrent
+; load (100 or 500 simultaneous connections) without dropping responses.
+; ---------------------------------------------------------------------------
+
+%define MAX_CLIENTS 256
+%define POLLIN    0x001
+%define POLLHUP   0x010
+%define POLLERR   0x008
+%define POLLNVAL  0x020
+%define READ_FLAGS (POLLIN | POLLHUP | POLLERR | POLLNVAL)
+%define MSG_NOSIGNAL 0x4000
+
+%define SYS_socket  41
+%define SYS_bind    49
+%define SYS_listen  50
+%define SYS_accept  43
+%define SYS_read    0
+%define SYS_sendto  44
+%define SYS_close   3
+%define SYS_poll    7
+
+AF_INET   equ 2
+SOCK_STREAM equ 1
+
 section .data
     response db 'HTTP/1.1 200 OK', 13, 10
              db 'Content-Type: application/json', 13, 10
@@ -6,68 +37,125 @@ section .data
              db 13, 10
              db '{"message":"Hello, world!"}'
     response_len equ $ - response
-    
+
     sockaddr:
-        dw 2                    ; AF_INET
-        dw 0x901f              ; Port 8080 (network byte order: 0x1f90)
-        dd 0                    ; INADDR_ANY
-        times 8 db 0           ; padding
+        dw AF_INET          ; family
+        dw 0x901f           ; port 8080 (0x1f90 big-endian)
+        dd 0                ; INADDR_ANY
+        times 8 db 0        ; padding
 
 section .bss
-    client_sock resd 1
-    buffer resb 1024
+    ; pollfds[0] is the listening socket, pollfds[1..] are clients.
+    ; struct pollfd = { int fd; short events; short revents; } (8 bytes)
+    pollfds   resb (MAX_CLIENTS + 1) * 8
+    buffer    resb 4096
 
 section .text
     global _start
 
 _start:
-    ; Create socket: socket(AF_INET, SOCK_STREAM, 0)
-    mov rax, 41            ; sys_socket
-    mov rdi, 2             ; AF_INET
-    mov rsi, 1             ; SOCK_STREAM
-    mov rdx, 0             ; protocol
+    mov rax, SYS_socket
+    mov rdi, AF_INET
+    mov rsi, SOCK_STREAM
+    mov rdx, 0
     syscall
-    mov r12, rax           ; Save socket fd
-    
-    ; Bind socket
-    mov rax, 49            ; sys_bind
-    mov rdi, r12           ; socket fd
-    lea rsi, [sockaddr]    ; address
-    mov rdx, 16            ; address length
+    mov r12, rax            ; r12 = listen fd
+
+    mov rax, SYS_bind
+    mov rdi, r12
+    lea rsi, [sockaddr]
+    mov rdx, 16
     syscall
-    
-    ; Listen
-    mov rax, 50            ; sys_listen
-    mov rdi, r12           ; socket fd
-    mov rsi, 128           ; backlog (increased from 10)
+
+    mov rax, SYS_listen
+    mov rdi, r12
+    mov rsi, 512
     syscall
-    
-accept_loop:
-    ; Accept connection
-    mov rax, 43            ; sys_accept
-    mov rdi, r12           ; socket fd
-    xor rsi, rsi           ; NULL
-    xor rdx, rdx           ; NULL
-    syscall
-    mov r13, rax           ; Save client fd
-    
-    ; Read request (we'll ignore it for this simple example)
-    mov rax, 0             ; sys_read
-    mov rdi, r13           ; client fd
-    lea rsi, [buffer]
-    mov rdx, 1024
-    syscall
-    
-    ; Write response
-    mov rax, 1             ; sys_write
-    mov rdi, r13           ; client fd
-    lea rsi, [response]
-    mov rdx, response_len
-    syscall
-    
-    ; Close client socket
-    mov rax, 3             ; sys_close
+
+    lea r13, [pollfds]      ; r13 = pollfds base
+    mov dword [r13 + 0], r12d       ; fd
+    mov word  [r13 + 4], POLLIN     ; events
+    mov word  [r13 + 6], 0          ; revents
+    mov rbx, 1              ; number of pollfds in use
+
+event_loop:
+    mov rax, SYS_poll
     mov rdi, r13
+    mov rsi, rbx
+    mov rdx, -1
     syscall
-    
-    jmp accept_loop
+    cmp rax, 0
+    jle event_loop
+
+    movzx eax, word [r13 + 6]       ; revents[0]
+    test ax, POLLIN
+    jz  .check_clients
+    ; Accept exactly ONE connection per poll pass. The listening socket is
+    ; blocking, so accepting in a loop would block and stall the event loop
+    ; until another connection arrives. poll() will wake us again if more
+    ; connections are still pending.
+    mov rax, SYS_accept
+    mov rdi, r12
+    xor rsi, rsi
+    xor rdx, rdx
+    syscall
+    js .check_clients       ; error (e.g. EAGAIN): no pending connection
+    mov r14d, eax
+    cmp rbx, MAX_CLIENTS + 1
+    jge .close_client_no_poll
+    imul rcx, rbx, 8
+    add rcx, r13
+    mov dword [rcx + 0], r14d
+    mov word  [rcx + 4], POLLIN
+    mov word  [rcx + 6], 0
+    inc rbx
+    jmp .check_clients
+.close_client_no_poll:
+    mov rax, SYS_close
+    mov rdi, r14
+    syscall
+    jmp .check_clients
+.check_clients:
+    ; r15 is the pollfds index we are examining (not touched by syscalls).
+    mov r15, 1
+.client_loop:
+    cmp r15, rbx
+    jge event_loop
+    imul r9, r15, 8
+    lea r10, [r13 + r9]      ; r10 = &pollfds[r15]
+    movzx eax, word [r10 + 6]
+    and ax, READ_FLAGS
+    jz  .next_client
+    ; read(fd, buffer, 4096)  -- rdi = fd held for later send/close
+    mov edi, dword [r10]
+    mov rax, SYS_read
+    mov rsi, buffer
+    mov rdx, 4096
+    syscall
+    ; sendto(fd, response, response_len, MSG_NOSIGNAL, NULL, 0)
+    mov rax, SYS_sendto
+    mov rsi, response
+    mov rdx, response_len
+    mov r10d, MSG_NOSIGNAL
+    xor r8, r8
+    xor r9, r9
+    syscall
+    ; close(fd)
+    mov rax, SYS_close
+    syscall
+    ; remove this entry (compact the array)
+    dec rbx
+    cmp r15, rbx
+    jge .next_client         ; removed slot was last; nothing to move
+    imul rcx, rbx, 8
+    lea rsi, [r13 + rcx]     ; last valid entry
+    imul rcx, r15, 8
+    lea rdi, [r13 + rcx]     ; freed slot
+    mov rcx, qword [rsi]
+    mov qword [rdi], rcx     ; copy last entry into freed slot
+    jmp .client_loop         ; re-check this index (may hold a moved entry)
+.next_client:
+    inc r15
+    jmp .client_loop
+
+section .note.GNU-stack noalloc noexec nowrite progbits

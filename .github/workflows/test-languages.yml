@@ -234,13 +234,24 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
-      - name: Install dependencies
-        working-directory: ./php
-        run: composer install
+          php-version: '8.3'
+          extensions: pcntl, sockets
       - name: Check PHP syntax
         working-directory: ./php
         run: php -l server.php
+      - name: Verify PHP server starts
+        working-directory: ./php
+        run: |
+          php server.php &
+          SERVER_PID=$!
+          sleep 2
+          RESPONSE=$(curl -s --max-time 5 http://127.0.0.1:8080/hello || echo "FAIL")
+          kill $SERVER_PID 2>/dev/null || true
+          if [ -z "$RESPONSE" ] || [ "$RESPONSE" = "FAIL" ]; then
+            echo "PHP server failed to respond"
+            exit 1
+          fi
+          echo "PHP server responded: $RESPONSE"
 
   # Assembly - just check file exists and has content
   test-assembly:

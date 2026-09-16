@@ -89,14 +89,12 @@ This workflow automatically runs comprehensive benchmarks every Monday and creat
    - Parse results into comparison table
    - Include success/failure status for each language
 
-4. **Pull Request Creation**
-   - Automatically create PR with results
-   - Include detailed summary with performance metrics
-   - Label PR with: `benchmark`, `automated`, `weekly-update`
-   - Add files: `benchmark_results.txt`, `benchmark_summary.md`, `stress_test_results/`
+4. **README Update (only README is committed)**
+   - The parsed results are written back into the `Benchmark Results` table of **`README.md`**
+   - The routine run commits **only `README.md`** back to `main` — no other repository files are touched
 
 5. **Artifact Upload**
-   - Upload benchmark results as artifacts
+   - Raw results (`benchmark_results.txt`, `benchmark_summary.md`) are uploaded as workflow artifacts
    - 90-day retention period for historical tracking
 
 ### Purpose

@@ -102,13 +102,13 @@ jobs:
           # Framework/Library mapping
           FRAMEWORKS = {
               'c': 'libmicrohttpd', 'crystal': 'HTTP::Server', 'rust': 'Actix-web',
-              'go': 'net/http', 'zig': 'Custom (std/http)', 'cpp': 'Crow',
-              'php': 'Built-in server', 'v': 'vweb', 'kotlin': 'Ktor',
+              'go': 'net/http', 'zig': 'Raw sockets (poll)', 'cpp': 'Crow',
+              'php': 'Raw sockets (pcntl)', 'v': 'net', 'kotlin': 'Ktor',
               'java': 'Spring Boot', 'python': 'FastAPI + Uvicorn',
               'javascript': 'Express', 'ruby': 'Sinatra + Puma',
-              'typescript': 'Express', 'nim': 'httpbeast',
-              'fortran': 'iso_c_binding', 'csharp': 'ASP.NET Core',
-              'ada': 'AWS', 'assembly': 'Raw syscall',
+              'typescript': 'Express', 'nim': 'std asynchttpserver',
+              'fortran': 'Raw sockets (iso_c_binding)', 'csharp': 'ASP.NET Core',
+              'ada': 'Raw sockets (C interop)', 'assembly': 'Raw syscalls (poll)',
           }
 
           # Parse benchmark results
@@ -171,17 +171,20 @@ jobs:
           PYEOF
         continue-on-error: true
 
-      - name: Commit benchmark results directly to main
+      - name: Commit updated README only
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add benchmark_results.txt benchmark_summary.md README.md
+          # Only README.md is committed to main. Benchmark artifacts are left on
+          # the runner and uploaded as workflow artifacts so no other repository
+          # files are touched by the routine run.
+          git add README.md
           if git diff --cached --quiet; then
             echo "No benchmark changes to commit"
           else
-            git commit -m "chore: weekly benchmark results - ${{ steps.timestamp.outputs.datetime }}"
+            git commit -m "chore: update README with weekly benchmark results - ${{ steps.timestamp.outputs.datetime }}"
             git push origin main
-            echo "Benchmark results committed directly to main"
+            echo "README committed directly to main"
           fi
 
       - name: Upload benchmark artifacts

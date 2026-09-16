@@ -6,14 +6,17 @@ pub fn main() !void {
     const allocator = std.heap.c_allocator;
 
     var pool: std.Thread.Pool = undefined;
-    // Use default thread pool size (approx CPU cores) for optimal performance with non-blocking I/O or efficient scheduling
-    try pool.init(.{ .allocator = allocator });
+    // The default (CPU-core-sized) thread pool and kernel listen backlog
+    // cannot drain a burst of concurrent benchmark connections fast enough,
+    // causing the last few connections to time out or be refused. Spawn
+    // enough workers and accept a large backlog to handle the load.
+    try pool.init(.{ .allocator = allocator, .n_jobs = 128 });
     defer pool.deinit();
 
     const address = try net.Address.parseIp("0.0.0.0", 8080);
-    // In Zig 0.13.0, use address.listen instead of StreamServer.init
     var server = try address.listen(.{
         .reuse_address = true,
+        .kernel_backlog = 1024,
     });
     defer server.deinit();
 
