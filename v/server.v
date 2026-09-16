@@ -7,10 +7,13 @@ const response_404 = 'HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nCont
 
 fn handle_conn(mut conn net.TcpConn) {
 	mut buf := []u8{}
-	mut chunk := []u8{len: 1024}
+	mut chunk := []u8{len: 4096}
 	// Read until the request line/headers are complete so a partial first read
-	// can't trigger a spurious 404 for a valid /hello. Each connection runs in
-	// its own goroutine, so blocking reads here do not stall the accept loop.
+	// can't trigger a spurious 404 for a valid /hello, and keep reading past
+	// 1024 bytes so a request with larger headers is still routed correctly.
+	// Each connection runs in its own goroutine, so blocking reads here do not
+	// stall the accept loop; the max_header cap bounds how long a peer that
+	// never finishes its request can hold this goroutine.
 	for {
 		r := conn.read(mut chunk) or { break }
 		if r <= 0 {
@@ -20,13 +23,15 @@ fn handle_conn(mut conn net.TcpConn) {
 		if buf.bytestr().contains('\r\n\r\n') {
 			break
 		}
-		if buf.len >= 1024 {
+		if buf.len >= 64 * 1024 {
 			break
 		}
 	}
-	req := buf.bytestr().trim('\x00')
-	// Serve 200 only for the exact GET /hello, otherwise 404.
-	if req.starts_with('GET /hello ') {
+	// Route on the exact request-line prefix read from the wire: slice the
+	// first bytes and compare directly, rather than comparing a null-trimmed
+	// whole-buffer string, so an embedded NUL byte cannot corrupt the match.
+	is_hello := buf.len >= 11 && buf[..11].bytestr() == 'GET /hello '
+	if is_hello {
 		conn.write_string(response) or {}
 	} else {
 		conn.write_string(response_404) or {}

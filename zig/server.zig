@@ -42,20 +42,28 @@ fn handleConnection(connection: net.Server.Connection) void {
     std.posix.setsockopt(connection.stream.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
 
     // Read until the full request line (or header terminator) has arrived so a
-    // partial first read can't trigger a spurious 404 for a valid /hello.
-    var buffer: [1024]u8 = undefined;
-    var total: usize = 0;
-    while (total < buffer.len) {
-        const n = connection.stream.read(buffer[total..]) catch return;
+    // partial first read can't trigger a spurious 404 for a valid /hello. The
+    // buffer grows as needed so a request whose headers exceed 1024 bytes is
+    // still read in full before routing (a fixed 1 KiB cap would turn such a
+    // valid request into a false 404). SO_RCVTIMEO (2s) above caps each read,
+    // so a peer that stalls is dropped, and a hard total-header cap bounds how
+    // long a peer that keeps trickling bytes can hold a worker.
+    const allocator = std.heap.c_allocator;
+    const max_header: usize = 64 * 1024;
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+    var scratch: [4096]u8 = undefined;
+    while (buffer.items.len < max_header) {
+        const n = connection.stream.read(scratch[0..]) catch return;
         if (n == 0) break;
-        total += n;
+        buffer.appendSlice(scratch[0..n]) catch return;
         // Stop once the request headers are complete (\r\n\r\n).
-        if (std.mem.indexOf(u8, buffer[0..total], "\r\n\r\n") != null) break;
+        if (std.mem.indexOf(u8, buffer.items, "\r\n\r\n") != null) break;
     }
 
-    if (total == 0) return;
+    if (buffer.items.len == 0) return;
 
-    const request = buffer[0..total];
+    const request = buffer.items;
 
     // Match "GET /hello " at the START of the request line only (not via a
     // substring scan that could match anywhere in the buffer).

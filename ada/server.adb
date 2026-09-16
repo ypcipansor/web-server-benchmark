@@ -104,9 +104,6 @@ procedure Server is
    --  on the WHOLE header read guarantees a slow/stalled peer is dropped after
    --  at most Read_Deadline_Sec seconds regardless of how it spaces its bytes.
    Read_Deadline_Sec : constant := 5;
-   --  Also bound the maximum number of read attempts per connection as a second,
-   --  time-independent guard (defensive; the absolute deadline above is primary).
-   Max_Read_Attempts : constant Natural := 100;
 
    --  Returns True when the request starts with the exact "GET /hello "
    --  request-line prefix.
@@ -168,7 +165,6 @@ procedure Server is
       Dummy        : long;
       Opt_Result   : int;
       Total        : Natural;
-      Read_Attempt : Natural;
       Full_Headers : Boolean;
       Start_Read   : Ada.Real_Time.Time;
       Deadline     : Ada.Real_Time.Time;
@@ -190,21 +186,18 @@ procedure Server is
          --  /hello. Stop early if the peer stalls for too long or the buffer
          --  fills.
          --
-         --  The absolute deadline is what protects the worker pool: SO_RCVTIMEO
-         --  alone only caps the pause between reads, so a peer trickling one
-         --  byte just under the timeout would keep the loop alive forever and
-         --  pin this worker despite never finishing its request. Capping the
-         --  total wall-clock time spent reading (plus a read-attempt cap as a
-         --  time-independent backstop) guarantees such a peer is dropped here,
-         --  so it can never accumulate across all 256 workers and starve /hello.
+         --  The absolute deadline is the only limit on the whole header read.
+         --  SO_RCVTIMEO alone only caps the pause between reads, so a peer that
+         --  trickles one byte just under the timeout would otherwise keep the
+         --  loop alive forever. Enforcing the Read_Deadline_Sec wall-clock
+         --  deadline guarantees such a peer is dropped here, so it can never
+         --  pin a worker forever or accumulate across the pool to starve /hello.
          Total := 0;
-         Read_Attempt := 0;
          Full_Headers := False;
          Start_Read := Ada.Real_Time.Clock;
          Deadline := Start_Read + Ada.Real_Time.Milliseconds (Read_Deadline_Sec * 1000);
          while Total < Local_Buffer'Length loop
             exit when Ada.Real_Time.Clock > Deadline;
-            exit when Read_Attempt >= Max_Read_Attempts;
             Dummy := C_Read
               (Client, Local_Buffer (size_t (Total))'Address,
                size_t (Local_Buffer'Length - Total));
@@ -212,7 +205,6 @@ procedure Server is
                exit;   -- timeout or peer closed
             end if;
             Total := Total + Natural (Dummy);
-            Read_Attempt := Read_Attempt + 1;
             if Has_Full_Headers (Local_Buffer, Total) then
                Full_Headers := True;
                exit;
