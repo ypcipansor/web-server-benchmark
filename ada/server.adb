@@ -15,6 +15,18 @@ procedure Server is
    PORT        : constant int := 8080;
    MSG_NOSIGNAL: constant int := 16#4000#;  -- 0x4000, Linux send() flag
 
+   --  Linux setsockopt constants for the per-connection receive timeout.
+   SOL_SOCKET : constant int := 1;
+   SO_RCVTIMEO: constant int := 20;         -- struct timeval receive timeout
+
+   --  struct timeval for SO_RCVTIMEO (seconds + microseconds). Both fields are
+   --  signed C long (time_t / suseconds_t on Linux).
+   type Timeval is record
+      Tv_Sec  : C.long;
+      Tv_Usec : C.long;
+   end record;
+   pragma Convention (C, Timeval);
+
    --  Raw C socket API imported directly, mirroring the Fortran server.
    --  This avoids any external Ada web-server dependency and is fully
    --  reproducible from the GNAT runtime alone.
@@ -43,6 +55,12 @@ procedure Server is
    --  Assembly server, which already uses MSG_NOSIGNAL on its sendto().
    function C_Send (Fd : int; Buf : System.Address; Count : size_t; Flags : int) return long;
    pragma Import (C, C_Send, "send");
+   --  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv): installs a short
+   --  receive timeout so a peer holding a partial request open cannot block a
+   --  worker forever (mirrors the Zig server's approach).
+   function C_Setsockopt (Sockfd : int; Level : int; Optname : int;
+                          Optval : System.Address; Optlen : unsigned) return int;
+   pragma Import (C, C_Setsockopt, "setsockopt");
    function C_Close (Fd : int) return int;
    pragma Import (C, C_Close, "close");
    function C_Htons (Hostshort : unsigned_short) return unsigned_short;
@@ -65,6 +83,13 @@ procedure Server is
      ASCII.CR & ASCII.LF &
      "Not found";
    Response_404_Len : constant size_t := size_t (Response_404'Length);
+
+   --  Two-second receive timeout applied to every client socket. Enabling it
+   --  below means a peer that sends only a partial request (no CRLFCRLF) and
+   --  then stalls will not pin a worker task forever; the blocking read returns
+   --  an error after the timeout and the worker frees the slot. Even a burst of
+   --  slow peers therefore cannot exhaust the fixed worker pool.
+   Timeout_Tv : aliased Timeval := (Tv_Sec => 2, Tv_Usec => 0);
 
    --  Returns True when the request starts with the exact "GET /hello "
    --  request-line prefix.
@@ -124,6 +149,7 @@ procedure Server is
    task body Handler is
       Client       : int;
       Dummy        : long;
+      Opt_Result   : int;
       Total        : Natural;
       Local_Buffer : aliased C.char_array (0 .. 1023);
    begin
@@ -131,6 +157,12 @@ procedure Server is
          accept Start (Fd : in int) do
             Client := Fd;
          end Start;
+
+         --  Set a 2-second receive timeout so a peer that sends a partial
+         --  request and then stalls cannot block this worker indefinitely.
+         Opt_Result := C_Setsockopt
+           (Client, SOL_SOCKET, SO_RCVTIMEO,
+            Timeout_Tv'Address, unsigned (Timeval'Size / 8));
 
          --  Read until the request headers are complete (CRLFCRLF) so a
          --  partial first read cannot trigger a spurious 404 for a valid

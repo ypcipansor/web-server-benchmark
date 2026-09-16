@@ -121,11 +121,23 @@ jobs:
                       if not line:
                           continue
                       parts = line.split('|')
-                      if len(parts) >= 3:
+                      # Columns: lang|rps|tpr|transfer_rate|failed_requests
+                      if len(parts) >= 5:
                           lang = parts[0].strip()
                           rps = parts[1].strip()
                           tpr = parts[2].strip()
+                          failed = parts[4].strip()
                           if rps not in ('BUILD_FAILED', 'SERVER_FAILED', ''):
+                              # A language with any failed requests is not a
+                              # clean result; exclude it from the leaderboard so
+                              # partial failures never appear as a success entry.
+                              try:
+                                  failed_n = int(failed) if failed else 0
+                              except ValueError:
+                                  failed_n = 1
+                              if failed_n > 0:
+                                  print(f"Skipping {lang}: {failed_n} failed requests")
+                                  continue
                               try:
                                   results.append((lang, float(rps), float(tpr)))
                               except ValueError:
@@ -168,17 +180,28 @@ jobs:
                   f.write(new_content)
               print(f"Updated README.md benchmark table with {len(results)} languages")
           else:
-              print("Warning: Could not find benchmark table in README.md, skipping update")
+              print("Error: Could not find benchmark table in README.md, cannot update", file=sys.stderr)
+              sys.exit(1)
           PYEOF
-        continue-on-error: true
 
       - name: Commit updated README only
+        # The routine run updates README.md on main. A workflow_dispatch can be
+        # launched from any branch; committing + pushing "origin main" from a
+        # non-main branch would wrongly rewrite main. Only commit & push back to
+        # main for the scheduled run (always on main) or an explicit main run.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Only README.md is committed to main. Benchmark artifacts are left on
           # the runner and uploaded as workflow artifacts so no other repository
           # files are touched by the routine run.
+          if [ "$EVENT_NAME" != "schedule" ] && [ "$REF" != "refs/heads/main" ]; then
+            echo "Skipping commit+push to main: triggered from ${REF} via ${EVENT_NAME}"
+            exit 0
+          fi
           git add README.md
           if git diff --cached --quiet; then
             echo "No benchmark changes to commit"

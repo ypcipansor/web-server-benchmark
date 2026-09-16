@@ -103,6 +103,21 @@ program http_server
             integer(c_int) :: c_fcntl
         end function c_fcntl
 
+        ! glibc helper returning the thread-local errno address; used to tell a
+        ! non-fatal EAGAIN (send buffer full on a non-blocking socket) apart from
+        ! a real error (EPIPE/ECONNRESET) so respond() can keep writing.
+        function c_errno_location() bind(C, name="__errno_location")
+            import :: c_ptr
+            type(c_ptr) :: c_errno_location
+        end function c_errno_location
+
+        ! Yield the CPU briefly when a non-blocking send returns EAGAIN instead
+        ! of busy-spinning while the peer drains its receive buffer.
+        function c_sched_yield() bind(C, name="sched_yield")
+            import :: c_int
+            integer(c_int) :: c_sched_yield
+        end function c_sched_yield
+
         function htons(hostshort) bind(C, name="htons")
             import :: c_int16_t
             integer(c_int16_t), value :: hostshort
@@ -247,22 +262,62 @@ program http_server
 
 contains
 
+    ! Return the current thread's errno (dereferences __errno_location()).
+    function get_errno() result(e)
+        integer(c_int) :: e
+        type(c_ptr) :: loc
+        integer(c_int), pointer :: p
+        loc = c_errno_location()
+        call c_f_pointer(loc, p)
+        e = p
+    end function get_errno
+
+    ! Write the full response to a non-blocking client socket. A single send()
+    ! may return a partial count, or -1/EAGAIN when the socket send buffer is
+    ! full (the peer is slow to read). Loop with a running offset until every
+    ! byte has been written; retry on EAGAIN and only stop on a fatal error.
+    ! This guarantees the client never sees a truncated response (which ab
+    ! would otherwise count as a failed request when we close too early).
+    subroutine send_all(fd, resp, resp_len)
+        integer(c_int), intent(in) :: fd
+        character(len=*), intent(in), target :: resp
+        integer(c_long), intent(in) :: resp_len
+        integer(c_long) :: sent, sent_total
+        integer(c_int) :: e, y
+        ! EAGAIN == EWOULDBLOCK == 11 on Linux: send buffer is full; retry.
+        integer(c_int), parameter :: EAGAIN = 11
+        sent_total = 0
+        do while (sent_total < resp_len)
+            sent = c_send(fd, c_loc(resp(sent_total+1:sent_total+1)), &
+                          resp_len - sent_total, MSG_NOSIGNAL)
+            if (sent > 0) then
+                sent_total = sent_total + sent
+            else
+                e = get_errno()
+                if (e == EAGAIN) then
+                    y = c_sched_yield()   ! wait for the peer to drain a bit
+                else
+                    exit                    ! fatal error; give up on this peer
+                end if
+            end if
+        end do
+    end subroutine send_all
+
     ! Route a buffered request: only an exact "GET /hello " request-line prefix
-    ! gets a 200; everything else gets a 404. Host-associates response_str /
-    ! response_404 and c_send from the host program.
+    ! gets a 200; everything else gets a 404. Response is fully flushed (all
+    ! bytes) before returning so the caller can safely close the socket.
     subroutine respond(fd, buf, total)
         integer(c_int), intent(in) :: fd
         character(len=*), intent(in) :: buf
         integer, intent(in) :: total
-        integer(c_long) :: sent
         if (total >= hello_len) then
             if (buf(1:hello_len) == 'GET /hello ') then
-                sent = c_send(fd, c_loc(response_str), len_trim(response_str, kind=8), MSG_NOSIGNAL)
+                call send_all(fd, response_str, len_trim(response_str, kind=8))
             else
-                sent = c_send(fd, c_loc(response_404), len_trim(response_404, kind=8), MSG_NOSIGNAL)
+                call send_all(fd, response_404, len_trim(response_404, kind=8))
             end if
         else
-            sent = c_send(fd, c_loc(response_404), len_trim(response_404, kind=8), MSG_NOSIGNAL)
+            call send_all(fd, response_404, len_trim(response_404, kind=8))
         end if
     end subroutine respond
 
