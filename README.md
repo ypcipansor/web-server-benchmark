@@ -67,7 +67,7 @@ Previously several implementations failed to build or run. They have been fixed 
 | **Go** | 10,258.75 | 48.74 | 107.88 | 13.99MiB |
 | **C++** | 9,453.60 | 52.89 | 89.50 | 6.70MiB |
 | **Zig** | 8,374.38 | 59.71 | 108.47 | 797.6MiB |
-| **PHP** | 9,572.33 | — | — | — |
+| **PHP** | 10,803.15 | 46.28 | 48.31 | 10.52MiB |
 | **Kotlin** | 3,822.19 | 130.82 | 278.56 | 173.7MiB |
 | **Python** | 2,164.04 | 231.05 | 109.45 | 33.71MiB |
 | **JavaScript** | 2,093.94 | 238.78 | 121.89 | 76.06MiB |
