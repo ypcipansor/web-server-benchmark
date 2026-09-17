@@ -63,7 +63,7 @@ When adding a new language implementation:
 
 ## benchmark-weekly.yml
 
-This workflow automatically runs comprehensive benchmarks every Monday and creates a pull request with the updated results.
+This workflow automatically runs comprehensive benchmarks every Monday and commits the updated results directly to `main`.
 
 ### Trigger Events
 
@@ -89,14 +89,12 @@ This workflow automatically runs comprehensive benchmarks every Monday and creat
    - Parse results into comparison table
    - Include success/failure status for each language
 
-4. **Pull Request Creation**
-   - Automatically create PR with results
-   - Include detailed summary with performance metrics
-   - Label PR with: `benchmark`, `automated`, `weekly-update`
-   - Add files: `benchmark_results.txt`, `benchmark_summary.md`, `stress_test_results/`
+4. **README Update (only README is committed)**
+   - The parsed results are written back into the `Benchmark Results` table of **`README.md`**
+   - The routine run commits **only `README.md`** back to `main` — no other repository files are touched
 
 5. **Artifact Upload**
-   - Upload benchmark results as artifacts
+   - Raw results (`benchmark_results.txt`, `benchmark_summary.md`) are uploaded as workflow artifacts
    - 90-day retention period for historical tracking
 
 ### Purpose
@@ -104,7 +102,7 @@ This workflow automatically runs comprehensive benchmarks every Monday and creat
 This automated workflow provides:
 - **Regular performance tracking** - Weekly benchmarks for consistent data
 - **Trend analysis** - Historical artifacts enable performance trend monitoring
-- **Visibility** - Automated PRs ensure results are reviewed
+- **Visibility** - Updated README table makes recent results easy to review
 - **Regression detection** - Early warning of performance degradations
 
 ### Manual Triggering
@@ -118,5 +116,5 @@ To run benchmarks manually:
 ### Permissions
 
 The workflow requires:
-- `contents: write` - To create commits with benchmark results
-- `pull-requests: write` - To create pull requests
+- `contents: write` - To commit the updated `README.md` back to `main`
+  (no pull request is created, so `pull-requests` permission is not needed)

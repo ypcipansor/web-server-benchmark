@@ -6,9 +6,10 @@ on:
     - cron: '0 0 * * 1'
   workflow_dispatch: # Allow manual trigger for testing
 
+# The routine run commits README.md directly to main; it does not open a pull
+# request, so only contents: write is required.
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   run-benchmarks:
@@ -69,14 +70,30 @@ jobs:
             echo "| Rank | Language | Req/sec | Time/req (ms) | Status |" >> benchmark_summary.md
             echo "|------|----------|---------|---------------|--------|" >> benchmark_summary.md
 
-            # Parse and format results, sorted by req/sec descending
+            # Parse and format results, sorted by req/sec descending.
+            # A language is only a clean "Success" when it has zero failed
+            # requests; this matches the README leaderboard filter (which
+            # excludes any row whose failed-requests column is > 0). A row
+            # with failed_requests > 0 (or a non-numeric / unparseable value)
+            # is flagged as failed here so the artifact never contradicts the
+            # README table.
             RANK=1
             while IFS='|' read -r lang rps tpr tr fr; do
               if [ "$rps" = "BUILD_FAILED" ] || [ "$rps" = "SERVER_FAILED" ]; then
                 echo "| - | $lang | N/A | N/A | ❌ $rps |" >> benchmark_summary.md
               elif [ -n "$rps" ] && [ -n "$tpr" ]; then
-                echo "| $RANK | $lang | $rps | $tpr | ✅ Success |" >> benchmark_summary.md
-                RANK=$((RANK + 1))
+                # Normalize the failed-requests column: default 0 when empty.
+                frn="${fr:-0}"
+                if [[ "$frn" =~ ^[0-9]+$ ]]; then
+                  if [ "$frn" -gt 0 ]; then
+                    echo "| - | $lang | $rps | $tpr | ❌ $frn failed |" >> benchmark_summary.md
+                  else
+                    echo "| $RANK | $lang | $rps | $tpr | ✅ Success |" >> benchmark_summary.md
+                    RANK=$((RANK + 1))
+                  fi
+                else
+                  echo "| - | $lang | $rps | $tpr | ❌ failed: '$fr' |" >> benchmark_summary.md
+                fi
               fi
             done < <(sort -t'|' -k2 -nr benchmark_results.txt)
           fi
@@ -102,13 +119,13 @@ jobs:
           # Framework/Library mapping
           FRAMEWORKS = {
               'c': 'libmicrohttpd', 'crystal': 'HTTP::Server', 'rust': 'Actix-web',
-              'go': 'net/http', 'zig': 'Custom (std/http)', 'cpp': 'Crow',
-              'php': 'Built-in server', 'v': 'vweb', 'kotlin': 'Ktor',
+              'go': 'net/http', 'zig': 'Raw sockets (Thread.Pool)', 'cpp': 'Crow',
+              'php': 'Raw sockets (pcntl + sockets)', 'v': 'net', 'kotlin': 'Ktor',
               'java': 'Spring Boot', 'python': 'FastAPI + Uvicorn',
               'javascript': 'Express', 'ruby': 'Sinatra + Puma',
-              'typescript': 'Express', 'nim': 'httpbeast',
-              'fortran': 'iso_c_binding', 'csharp': 'ASP.NET Core',
-              'ada': 'AWS', 'assembly': 'Raw syscall',
+              'typescript': 'Express', 'nim': 'std asynchttpserver',
+              'fortran': 'Raw sockets (iso_c_binding)', 'csharp': 'ASP.NET Core',
+              'ada': 'Raw sockets (C interop)', 'assembly': 'Raw syscalls (poll)',
           }
 
           # Parse benchmark results
@@ -120,11 +137,23 @@ jobs:
                       if not line:
                           continue
                       parts = line.split('|')
-                      if len(parts) >= 3:
+                      # Columns: lang|rps|tpr|transfer_rate|failed_requests
+                      if len(parts) >= 5:
                           lang = parts[0].strip()
                           rps = parts[1].strip()
                           tpr = parts[2].strip()
+                          failed = parts[4].strip()
                           if rps not in ('BUILD_FAILED', 'SERVER_FAILED', ''):
+                              # A language with any failed requests is not a
+                              # clean result; exclude it from the leaderboard so
+                              # partial failures never appear as a success entry.
+                              try:
+                                  failed_n = int(failed) if failed else 0
+                              except ValueError:
+                                  failed_n = 1
+                              if failed_n > 0:
+                                  print(f"Skipping {lang}: {failed_n} failed requests")
+                                  continue
                               try:
                                   results.append((lang, float(rps), float(tpr)))
                               except ValueError:
@@ -167,21 +196,35 @@ jobs:
                   f.write(new_content)
               print(f"Updated README.md benchmark table with {len(results)} languages")
           else:
-              print("Warning: Could not find benchmark table in README.md, skipping update")
+              print("Error: Could not find benchmark table in README.md, cannot update", file=sys.stderr)
+              sys.exit(1)
           PYEOF
-        continue-on-error: true
 
-      - name: Commit benchmark results directly to main
+      - name: Commit updated README only
+        # The routine run updates README.md on main. A workflow_dispatch can be
+        # launched from any branch; committing + pushing "origin main" from a
+        # non-main branch would wrongly rewrite main. Only commit & push back to
+        # main for the scheduled run (always on main) or an explicit main run.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add benchmark_results.txt benchmark_summary.md README.md
+          # Only README.md is committed to main. Benchmark artifacts are left on
+          # the runner and uploaded as workflow artifacts so no other repository
+          # files are touched by the routine run.
+          if [ "$EVENT_NAME" != "schedule" ] && [ "$REF" != "refs/heads/main" ]; then
+            echo "Skipping commit+push to main: triggered from ${REF} via ${EVENT_NAME}"
+            exit 0
+          fi
+          git add README.md
           if git diff --cached --quiet; then
             echo "No benchmark changes to commit"
           else
-            git commit -m "chore: weekly benchmark results - ${{ steps.timestamp.outputs.datetime }}"
+            git commit -m "chore: update README with weekly benchmark results - ${{ steps.timestamp.outputs.datetime }}"
             git push origin main
-            echo "Benchmark results committed directly to main"
+            echo "README committed directly to main"
           fi
 
       - name: Upload benchmark artifacts
@@ -210,8 +253,25 @@ jobs:
             echo "### Quick Stats" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
 
-            success_count=$(grep -v "BUILD_FAILED\|SERVER_FAILED" benchmark_results.txt | grep -c '|' || echo "0")
-            failed_count=$(grep -cE "BUILD_FAILED|SERVER_FAILED" benchmark_results.txt || echo "0")
+            # Matches the README leaderboard filter: only rows with zero failed
+            # requests (failed column absent or 0) count as successful; rows
+            # with failed_requests > 0 (or a non-numeric failed column), plus
+            # any BUILD_FAILED/SERVER_FAILED row, count as failed so the
+            # summary never disagrees with the README table.
+            success_count=0
+            failed_count=0
+            while IFS='|' read -r lang rps tpr tr fr; do
+              if [ "$rps" = "BUILD_FAILED" ] || [ "$rps" = "SERVER_FAILED" ]; then
+                failed_count=$((failed_count + 1))
+              elif [ -n "$rps" ] && [ -n "$tpr" ]; then
+                frn="${fr:-0}"
+                if [[ "$frn" =~ ^[0-9]+$ ]] && [ "$frn" -eq 0 ]; then
+                  success_count=$((success_count + 1))
+                else
+                  failed_count=$((failed_count + 1))
+                fi
+              fi
+            done < benchmark_results.txt
 
             echo "- ✅ Successful benchmarks: $success_count" >> $GITHUB_STEP_SUMMARY
             echo "- ❌ Failed benchmarks: $failed_count" >> $GITHUB_STEP_SUMMARY
@@ -221,8 +281,11 @@ jobs:
             echo "| Language | Req/sec | Latency (ms) |" >> $GITHUB_STEP_SUMMARY
             echo "|----------|---------|--------------|" >> $GITHUB_STEP_SUMMARY
             sort -t'|' -k2 -nr benchmark_results.txt | while IFS='|' read -r lang rps tpr tr fr; do
-              if [ "$rps" != "BUILD_FAILED" ] && [ "$rps" != "SERVER_FAILED" ] && [ -n "$rps" ]; then
-                echo "| $lang | $rps | $tpr |" >> $GITHUB_STEP_SUMMARY
+              if [ "$rps" != "BUILD_FAILED" ] && [ "$rps" != "SERVER_FAILED" ] && [ -n "$rps" ] && [ -n "$tpr" ]; then
+                frn="${fr:-0}"
+                if [[ "$frn" =~ ^[0-9]+$ ]] && [ "$frn" -eq 0 ]; then
+                  echo "| $lang | $rps | $tpr |" >> $GITHUB_STEP_SUMMARY
+                fi
               fi
             done
           else

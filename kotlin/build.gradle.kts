@@ -1,6 +1,6 @@
 plugins {
-    kotlin("jvm") version "2.4.0"
-    kotlin("plugin.serialization") version "2.4.0"
+    kotlin("jvm") version "2.4.20"
+    kotlin("plugin.serialization") version "2.4.20"
     id("io.github.goooler.shadow") version "8.1.8"
     application
 }
@@ -18,7 +18,7 @@ dependencies {
     implementation("io.ktor:ktor-server-netty:3.5.2")
     implementation("io.ktor:ktor-server-content-negotiation:3.5.2")
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
-    implementation("ch.qos.logback:logback-classic:1.6.1")
+    implementation("ch.qos.logback:logback-classic:1.6.3")
 }
 
 application {

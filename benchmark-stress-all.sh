@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+# All 19 language implementations, matching benchmark-all.sh so the stress
+# suite covers the same set as the standard benchmark.
 LANGUAGES=(
     "c"
     "crystal"
@@ -16,12 +18,17 @@ LANGUAGES=(
     "javascript"
     "ruby"
     "typescript"
+    "ada"
+    "assembly"
+    "csharp"
+    "fortran"
+    "nim"
 )
 
 echo "Starting Stress Tests..."
 
-echo "| Language | Requests/sec | Avg Latency (ms) | Peak CPU (%) | Peak Memory |" > stress_summary.md
-echo "|----------|--------------|------------------|--------------|-------------|" >> stress_summary.md
+echo "| Language | Requests/sec | Avg Latency (ms) | Peak CPU (%) | Peak Memory | Status |" > stress_summary.md
+echo "|----------|--------------|------------------|--------------|-------------|--------|" >> stress_summary.md
 
 for LANG in "${LANGUAGES[@]}"; do
     ./benchmark-stress.sh $LANG 10
@@ -38,7 +45,21 @@ for LANG in "${LANGUAGES[@]}"; do
     # Peak Mem parsing (taking the first part before space)
     PEAK_MEM=$(awk -F',' 'NR>1 {print $3}' $STATS_FILE | awk '{print $1}' | sort -rh | head -1)
 
-    echo "| **${LANG^}** | $RPS | $LATENCY | $PEAK_CPU | $PEAK_MEM |" >> stress_summary.md
+    # Status consistent with the README leaderboard filter: only a run with
+    # zero failed requests counts as a success. A missing/empty value or any
+    # failed request flags the row so the summary never contradicts the
+    # leaderboard in README.md.
+    FAILED=$(grep "Failed requests:" $AB_FILE | awk '{print $3}')
+    FAILED=${FAILED:-''}
+    if [ -n "$FAILED" ] && [ "$FAILED" != "0" ]; then
+        STATUS="❌ ${FAILED} failed"
+    elif [ -z "$RPS" ] || [ "$RPS" = "0" ]; then
+        STATUS="❌ no data"
+    else
+        STATUS="✅ Success"
+    fi
+
+    echo "| **${LANG^}** | $RPS | $LATENCY | $PEAK_CPU | $PEAK_MEM | $STATUS |" >> stress_summary.md
     echo "Finished $LANG"
 done
 

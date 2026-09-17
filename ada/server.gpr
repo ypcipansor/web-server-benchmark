@@ -1,5 +1,3 @@
-with "aws";
-
 project Server is
    for Source_Dirs use (".");
    for Main use ("server.adb");
