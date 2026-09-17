@@ -1,18 +1,13 @@
-FROM debian:bullseye-slim as builder
-RUN apt-get update && apt-get install -y gnat gprbuild libaws20-dev
+FROM debian:bookworm-slim as builder
+RUN apt-get update && apt-get install -y gnat gprbuild && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY server.adb server.gpr ./
-# Compile with AWS libraries
+# Compile against the GNAT runtime only (raw C socket interop), no external AWS dependency
 RUN gprbuild -P server.gpr
 
-FROM debian:bullseye-slim
-RUN apt-get update && apt-get install -y libaws6 openssl ca-certificates mime-support && rm -rf /var/lib/apt/lists/*
-# Generate dummy certs
-RUN openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost"
-
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y libgnat-12 && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/server /server
-# Create templates directory just in case
-RUN mkdir -p /templates
 WORKDIR /
 EXPOSE 8080
 CMD ["/server"]

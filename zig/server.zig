@@ -6,14 +6,17 @@ pub fn main() !void {
     const allocator = std.heap.c_allocator;
 
     var pool: std.Thread.Pool = undefined;
-    // Use default thread pool size (approx CPU cores) for optimal performance with non-blocking I/O or efficient scheduling
-    try pool.init(.{ .allocator = allocator });
+    // The default (CPU-core-sized) thread pool and kernel listen backlog
+    // cannot drain a burst of concurrent benchmark connections fast enough,
+    // causing the last few connections to time out or be refused. Spawn
+    // enough workers and accept a large backlog to handle the load.
+    try pool.init(.{ .allocator = allocator, .n_jobs = 128 });
     defer pool.deinit();
 
     const address = try net.Address.parseIp("0.0.0.0", 8080);
-    // In Zig 0.13.0, use address.listen instead of StreamServer.init
     var server = try address.listen(.{
         .reuse_address = true,
+        .kernel_backlog = 1024,
     });
     defer server.deinit();
 
@@ -29,17 +32,42 @@ pub fn main() !void {
 fn handleConnection(connection: net.Server.Connection) void {
     defer connection.stream.close();
 
-    var buffer: [1024]u8 = undefined;
+    // Give each connection a short receive timeout so a peer that holds a
+    // partial request open (never sending the "\r\n\r\n" terminator below)
+    // cannot block a worker thread forever. With n_jobs=128 workers, even a
+    // handful of stuck peers could otherwise consume the entire pool and starve
+    // every new connection. After the timeout, read() returns EWOULDBLOCK and
+    // we drop the connection.
+    const tv = std.posix.timeval{ .tv_sec = 2, .tv_usec = 0 };
+    std.posix.setsockopt(connection.stream.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
 
-    // Read request
-    const bytes_read = connection.stream.read(&buffer) catch return;
+    // Read until the full request line (or header terminator) has arrived so a
+    // partial first read can't trigger a spurious 404 for a valid /hello. The
+    // buffer grows as needed so a request whose headers exceed 1024 bytes is
+    // still read in full before routing (a fixed 1 KiB cap would turn such a
+    // valid request into a false 404). SO_RCVTIMEO (2s) above caps each read,
+    // so a peer that stalls is dropped, and a hard total-header cap bounds how
+    // long a peer that keeps trickling bytes can hold a worker.
+    const allocator = std.heap.c_allocator;
+    const max_header: usize = 64 * 1024;
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+    var scratch: [4096]u8 = undefined;
+    while (buffer.items.len < max_header) {
+        const n = connection.stream.read(scratch[0..]) catch return;
+        if (n == 0) break;
+        buffer.appendSlice(scratch[0..n]) catch return;
+        // Stop once the request headers are complete (\r\n\r\n).
+        if (std.mem.indexOf(u8, buffer.items, "\r\n\r\n") != null) break;
+    }
 
-    if (bytes_read == 0) return;
+    if (buffer.items.len == 0) return;
 
-    const request = buffer[0..bytes_read];
+    const request = buffer.items;
 
-    // Check for GET /hello
-    if (std.mem.indexOf(u8, request, "GET /hello ") != null) {
+    // Match "GET /hello " at the START of the request line only (not via a
+    // substring scan that could match anywhere in the buffer).
+    if (std.mem.startsWith(u8, request, "GET /hello ")) {
         const response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 27\r\nConnection: close\r\n\r\n{\"message\":\"Hello, world!\"}";
         _ = connection.stream.writeAll(response) catch {};
     } else {
