@@ -14,25 +14,24 @@ Each implementation runs in Docker, serves `GET /hello`, and returns `{"message"
 
 | Rank | Language | Framework/Library | Requests/sec | Avg Latency (ms) |
 |------|----------|-------------------|--------------|------------------|
-| 1 | **C** | libmicrohttpd | 14,572.71 | 6.86 |
-| 2 | **Go** | net/http | 14,050.69 | 7.12 |
-| 3 | **Rust** | Actix-web | 13,994.00 | 7.15 |
-| 4 | **Fortran** | Raw sockets (iso_c_binding) | 12,478.44 | 8.01 |
-| 5 | **Ada** | Raw sockets (C interop) | 12,332.45 | 8.11 |
-| 6 | **Assembly** | Raw syscalls (poll) | 11,832.15 | 8.45 |
-| 7 | **Nim** | std asynchttpserver | 11,484.95 | 8.71 |
-| 8 | **PHP** | Raw sockets (pcntl + sockets) | 11,484.48 | 8.71 |
-| 9 | **C++** | Crow | 10,407.78 | 9.61 |
-| 10 | **Zig** | Raw sockets (Thread.Pool) | 10,098.02 | 9.90 |
-| 11 | **JavaScript** | Express | 7,802.34 | 12.82 |
-| 12 | **TypeScript** | Express | 7,429.45 | 13.46 |
-| 13 | **C#** | ASP.NET Core | 6,335.59 | 15.78 |
-| 14 | **Java** | Spring Boot | 5,193.40 | 19.26 |
-| 15 | **V** | net | 4,564.69 | 21.91 |
-| 16 | **Python** | FastAPI + Uvicorn | 3,503.16 | 28.55 |
-| 17 | **Crystal** | HTTP::Server | 3,457.92 | 28.92 |
-| 18 | **Kotlin** | Ktor | 3,219.30 | 31.06 |
-| 19 | **Ruby** | Sinatra + Puma | 1,983.19 | 50.42 |
+| 1 | **Assembly** | Raw syscalls (poll) | 12,177.57 | 8.21 |
+| 2 | **Fortran** | Raw sockets (iso_c_binding) | 11,817.06 | 8.46 |
+| 3 | **C** | libmicrohttpd | 11,367.30 | 8.80 |
+| 4 | **Nim** | std asynchttpserver | 10,701.18 | 9.35 |
+| 5 | **Zig** | Raw sockets (Thread.Pool) | 9,759.41 | 10.25 |
+| 6 | **Rust** | Actix-web | 9,745.27 | 10.26 |
+| 7 | **Ada** | Raw sockets (C interop) | 9,553.07 | 10.47 |
+| 8 | **Go** | net/http | 9,169.43 | 10.91 |
+| 9 | **C++** | Crow | 7,686.89 | 13.01 |
+| 10 | **C#** | ASP.NET Core | 5,140.96 | 19.45 |
+| 11 | **TypeScript** | Express | 4,594.18 | 21.77 |
+| 12 | **Crystal** | HTTP::Server | 4,586.25 | 21.80 |
+| 13 | **JavaScript** | Express | 4,585.17 | 21.81 |
+| 14 | **Java** | Spring Boot | 3,956.74 | 25.27 |
+| 15 | **V** | net | 2,701.85 | 37.01 |
+| 16 | **Python** | FastAPI + Uvicorn | 2,559.89 | 39.06 |
+| 17 | **Kotlin** | Ktor | 2,550.07 | 39.22 |
+| 18 | **Ruby** | Sinatra + Puma | 1,524.53 | 65.59 |
 
 ## 🏆 Highlights
 
