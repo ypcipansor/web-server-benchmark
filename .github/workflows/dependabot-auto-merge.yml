@@ -19,12 +19,76 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
       - name: Auto-merge patch/minor updates
         if: |
           steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
           steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
           steps.metadata.outputs.update-type == 'version-update:semver-major'
         run: |
-          gh pr merge --squash --auto "${{ github.event.pull_request.number }}"
+          # Best effort: request GitHub's built-in auto-merge. The step below is
+          # the authoritative gate, so tolerate environments where the merge
+          # queue is unavailable.
+          gh pr merge --squash --auto "${{ github.event.pull_request.number }}" \
+            || echo "Could not enable built-in auto-merge; relying on the explicit check gate."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge once all Dependabot checks pass
+        if: |
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Poll the pull request checks for up to ~30 minutes and merge as
+          # soon as every check reports a successful conclusion. This makes the
+          # workflow a green, self-verifying merge gate even when the built-in
+          # auto-merge queue cannot be used.
+          for attempt in $(seq 1 60); do
+            # If the built-in auto-merge already merged (or closed) the pull
+            # request, there is nothing left to gate on.
+            STATE=$(gh pr view "$PR_NUMBER" --json state --jq .state 2>/dev/null) || true
+            if [ "$STATE" = "MERGED" ] || [ "$STATE" = "CLOSED" ]; then
+              echo "PR #$PR_NUMBER is already $STATE."
+              exit 0
+            fi
+            # gh pr checks exits non-zero while checks are pending/failing, so
+            # tolerate the exit code and evaluate the JSON ourselves. Exclude
+            # this workflow's own check while it is running.
+            CHECKS=$(gh pr checks "$PR_NUMBER" --json name,state \
+              --jq '[.[] | select(.name | startswith("auto-merge") | not)]' 2>/dev/null) || true
+            if [ -z "$CHECKS" ]; then
+              echo "No checks reported yet; retrying..."
+              sleep 30
+              continue
+            fi
+            PENDING=$(echo "$CHECKS" | jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "EXPECTED" or .state == "WAITING")] | length')
+            FAILED=$(echo "$CHECKS" | jq '[.[] | select(.state == "FAILURE" or .state == "ERROR" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ACTION_REQUIRED" or .state == "STARTUP_FAILURE")] | length')
+            if [ "$FAILED" -gt 0 ]; then
+              echo "A check failed; not merging."
+              echo "$CHECKS" | jq -r '.[] | select(.state == "FAILURE" or .state == "ERROR" or .state == "CANCELLED" or .state == "TIMED_OUT") | "  \(.name): \(.state)"'
+              exit 1
+            fi
+            if [ "$PENDING" -eq 0 ]; then
+              echo "All checks passed; merging PR #$PR_NUMBER."
+              if gh pr merge --squash "$PR_NUMBER"; then
+                exit 0
+              fi
+              # The built-in auto-merge may have already merged the pull request.
+              if [ "$(gh pr view "$PR_NUMBER" --json state --jq .state)" = "MERGED" ]; then
+                echo "PR #$PR_NUMBER was already merged."
+                exit 0
+              fi
+              echo "Failed to merge PR #$PR_NUMBER."
+              exit 1
+            fi
+            echo "Attempt $attempt: $PENDING check(s) still running..."
+            sleep 30
+          done
+          echo "Timed out waiting for checks to finish."
+          exit 1
