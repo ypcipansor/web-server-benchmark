@@ -14,24 +14,24 @@ Each implementation runs in Docker, serves `GET /hello`, and returns `{"message"
 
 | Rank | Language | Framework/Library | Requests/sec | Avg Latency (ms) |
 |------|----------|-------------------|--------------|------------------|
-| 1 | **Assembly** | Raw syscalls (poll) | 12,177.57 | 8.21 |
-| 2 | **Fortran** | Raw sockets (iso_c_binding) | 11,817.06 | 8.46 |
-| 3 | **C** | libmicrohttpd | 11,367.30 | 8.80 |
-| 4 | **Nim** | std asynchttpserver | 10,701.18 | 9.35 |
-| 5 | **Zig** | Raw sockets (Thread.Pool) | 9,759.41 | 10.25 |
-| 6 | **Rust** | Actix-web | 9,745.27 | 10.26 |
-| 7 | **Ada** | Raw sockets (C interop) | 9,553.07 | 10.47 |
-| 8 | **Go** | net/http | 9,169.43 | 10.91 |
-| 9 | **C++** | Crow | 7,686.89 | 13.01 |
-| 10 | **C#** | ASP.NET Core | 5,140.96 | 19.45 |
-| 11 | **TypeScript** | Express | 4,594.18 | 21.77 |
-| 12 | **Crystal** | HTTP::Server | 4,586.25 | 21.80 |
-| 13 | **JavaScript** | Express | 4,585.17 | 21.81 |
-| 14 | **Java** | Spring Boot | 3,956.74 | 25.27 |
-| 15 | **V** | net | 2,701.85 | 37.01 |
-| 16 | **Python** | FastAPI + Uvicorn | 2,559.89 | 39.06 |
-| 17 | **Kotlin** | Ktor | 2,550.07 | 39.22 |
-| 18 | **Ruby** | Sinatra + Puma | 1,524.53 | 65.59 |
+| 1 | **Assembly** | Raw syscalls (poll) | 21,402.51 | 4.67 |
+| 2 | **Fortran** | Raw sockets (iso_c_binding) | 20,953.16 | 4.77 |
+| 3 | **PHP** | Raw sockets (pcntl + sockets) | 20,466.14 | 4.89 |
+| 4 | **Zig** | Raw sockets (Thread.Pool) | 19,707.27 | 5.07 |
+| 5 | **Nim** | std asynchttpserver | 19,697.21 | 5.08 |
+| 6 | **Rust** | Actix-web | 19,486.11 | 5.13 |
+| 7 | **C** | libmicrohttpd | 19,025.66 | 5.26 |
+| 8 | **Go** | net/http | 17,362.26 | 5.76 |
+| 9 | **Ada** | Raw sockets (C interop) | 16,245.32 | 6.16 |
+| 10 | **C++** | Crow | 14,311.76 | 6.99 |
+| 11 | **JavaScript** | Express | 12,016.23 | 8.32 |
+| 12 | **TypeScript** | Express | 11,358.23 | 8.80 |
+| 13 | **Java** | Spring Boot | 7,319.56 | 13.66 |
+| 14 | **Python** | FastAPI + Uvicorn | 5,142.19 | 19.45 |
+| 15 | **Kotlin** | Ktor | 4,840.27 | 20.66 |
+| 16 | **Crystal** | HTTP::Server | 4,513.97 | 22.15 |
+| 17 | **V** | net | 3,428.18 | 29.17 |
+| 18 | **Ruby** | Sinatra + Puma | 2,742.68 | 36.46 |
 
 ## 🏆 Highlights
 
