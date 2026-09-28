@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main, master]
 
+# All jobs only check out and build the source, so the GITHUB_TOKEN never needs
+# more than read access to repository contents. Declaring this explicitly keeps
+# every job at least privilege instead of inheriting the repository default.
+permissions:
+  contents: read
+
 jobs:
   # Compiled languages that can be built directly
   test-rust:
