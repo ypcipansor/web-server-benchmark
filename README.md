@@ -14,24 +14,23 @@ Each implementation runs in Docker, serves `GET /hello`, and returns `{"message"
 
 | Rank | Language | Framework/Library | Requests/sec | Avg Latency (ms) |
 |------|----------|-------------------|--------------|------------------|
-| 1 | **Assembly** | Raw syscalls (poll) | 21,402.51 | 4.67 |
-| 2 | **Fortran** | Raw sockets (iso_c_binding) | 20,953.16 | 4.77 |
-| 3 | **PHP** | Raw sockets (pcntl + sockets) | 20,466.14 | 4.89 |
-| 4 | **Zig** | Raw sockets (Thread.Pool) | 19,707.27 | 5.07 |
-| 5 | **Nim** | std asynchttpserver | 19,697.21 | 5.08 |
-| 6 | **Rust** | Actix-web | 19,486.11 | 5.13 |
-| 7 | **C** | libmicrohttpd | 19,025.66 | 5.26 |
-| 8 | **Go** | net/http | 17,362.26 | 5.76 |
-| 9 | **Ada** | Raw sockets (C interop) | 16,245.32 | 6.16 |
-| 10 | **C++** | Crow | 14,311.76 | 6.99 |
-| 11 | **JavaScript** | Express | 12,016.23 | 8.32 |
-| 12 | **TypeScript** | Express | 11,358.23 | 8.80 |
-| 13 | **Java** | Spring Boot | 7,319.56 | 13.66 |
-| 14 | **Python** | FastAPI + Uvicorn | 5,142.19 | 19.45 |
-| 15 | **Kotlin** | Ktor | 4,840.27 | 20.66 |
-| 16 | **Crystal** | HTTP::Server | 4,513.97 | 22.15 |
-| 17 | **V** | net | 3,428.18 | 29.17 |
-| 18 | **Ruby** | Sinatra + Puma | 2,742.68 | 36.46 |
+| 1 | **Fortran** | Raw sockets (iso_c_binding) | 21,998.28 | 4.55 |
+| 2 | **Assembly** | Raw syscalls (poll) | 21,622.46 | 4.62 |
+| 3 | **C** | libmicrohttpd | 21,302.79 | 4.69 |
+| 4 | **Zig** | Raw sockets (Thread.Pool) | 20,148.21 | 4.96 |
+| 5 | **Nim** | std asynchttpserver | 19,980.62 | 5.00 |
+| 6 | **Rust** | Actix-web | 19,191.24 | 5.21 |
+| 7 | **Go** | net/http | 19,093.30 | 5.24 |
+| 8 | **Ada** | Raw sockets (C interop) | 18,800.81 | 5.32 |
+| 9 | **C++** | Crow | 15,910.47 | 6.29 |
+| 10 | **TypeScript** | Express | 12,731.28 | 7.86 |
+| 11 | **JavaScript** | Express | 12,532.69 | 7.98 |
+| 12 | **Java** | Spring Boot | 7,184.34 | 13.92 |
+| 13 | **Kotlin** | Ktor | 5,242.47 | 19.07 |
+| 14 | **Python** | FastAPI + Uvicorn | 4,923.52 | 20.31 |
+| 15 | **Crystal** | HTTP::Server | 4,672.30 | 21.40 |
+| 16 | **V** | net | 4,367.57 | 22.90 |
+| 17 | **Ruby** | Sinatra + Puma | 2,559.68 | 39.07 |
 
 ## 🏆 Highlights
 
